@@ -1,0 +1,21 @@
+###peticion get
+get http://localhost/loginApi/
+
+###peticion post - verificar un usuario
+Post http://localhost/loginApi/login
+Content-Type: application/json
+
+{
+    "correo": "pepito@gmail.com",
+    "contrasena": "123pepito"
+}
+
+###peticion post para crear usuarios
+POST http://localhost/loginApi/register
+Content-Type: application/json
+
+{
+    "nombre": "carlos",
+    "correo": "carlos@gmail.com",
+    "contrasena": "123carlos"
+}
