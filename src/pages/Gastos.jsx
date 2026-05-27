@@ -1,185 +1,535 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import AppLayout from '../components/AppLayout';
 import Modal from '../components/Modal';
-import { GASTOS, CATEGORIAS, fmt } from '../data/mockData';
+import { fmt } from '../data/mockData';
+import { gastosApi } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+
+// ✅ Todo en minuscula — coincide exactamente con Gastos.java
+const FORM_VACIO = {
+  descripcion: '', valor: '', fecha: '', comercio: '',
+  medioPago: '', ubicacion: '', imagen: '', maximo: '', minimo: '',
+};
+
+// ✅ fecha puede llegar como array [2026,5,26] o string "2026-05-26"
+const formatearFecha = (fecha) => {
+  if (!fecha) return '';
+  if (Array.isArray(fecha)) {
+    const [a, m, d] = fecha;
+    return `${a}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  }
+  if (typeof fecha === 'string' && fecha.includes('-')) return fecha;
+  if (typeof fecha === 'string' && fecha.includes('/')) {
+    const [d, m, a] = fecha.split('/');
+    return `${a}-${m}-${d}`;
+  }
+  return String(fecha);
+};
+
+const mapearGasto = (g) => ({
+  id:          g.id,
+  descripcion: g.descripcion || '',
+  valor:       g.valor       || 0,
+  fecha:       formatearFecha(g.fecha),
+  // ✅ backend devuelve "comercio" en minuscula
+  comercio:    g.comercio    || '',
+  medioPago:   g.medioPago   || '',
+  ubicacion:   g.ubicacion   || '',
+  imagen:      g.imagen      || null,
+  maximo:      g.maximo      || 0,
+  minimo:      g.minimo      || '0',
+});
+
+const construirPayload = (form) => ({
+  descripcion: form.descripcion,
+  valor:       parseInt(form.valor, 10) || 0,
+  fecha:       form.fecha,
+  // ✅ "comercio" en minuscula — nombre exacto del campo en Gastos.java
+  comercio:    (!form.comercio || form.comercio === '') ? 'Sin comercio' : form.comercio,
+  medioPago:   form.medioPago  || 'Efectivo',
+  ubicacion:   form.ubicacion  || 'Sin ubicacion',
+  imagen:      form.imagen     || null,
+  maximo:      parseInt(form.maximo, 10) || 0,
+  minimo:      form.minimo     || '0',
+});
 
 export default function Gastos() {
-  const [modalOpen, setModalOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const [catFilter, setCatFilter] = useState('');
+  const { user } = useAuth();
 
-  const filtered = GASTOS.filter(g => {
-    const matchSearch = g.nombre.toLowerCase().includes(search.toLowerCase()) || g.sub.toLowerCase().includes(search.toLowerCase());
-    const matchCat = catFilter ? g.cat === catFilter : true;
-    return matchSearch && matchCat;
-  });
+  const [gastos,        setGastos]        = useState([]);
+  const [cargando,      setCargando]      = useState(true);
+  const [error,         setError]         = useState('');
+  const [search,        setSearch]        = useState('');
 
+  const [modalCrear,    setModalCrear]    = useState(false);
+  const [formCrear,     setFormCrear]     = useState(FORM_VACIO);
+  const [guardando,     setGuardando]     = useState(false);
+  const [msgCrear,      setMsgCrear]      = useState('');
+
+  const [modalEditar,   setModalEditar]   = useState(false);
+  const [gastoEdit,     setGastoEdit]     = useState(null);
+  const [formEditar,    setFormEditar]    = useState(FORM_VACIO);
+  const [actualizando,  setActualizando]  = useState(false);
+  const [msgEditar,     setMsgEditar]     = useState('');
+
+  const [modalEliminar,  setModalEliminar]  = useState(false);
+  const [gastoAEliminar, setGastoAEliminar] = useState(null);
+  const [eliminando,     setEliminando]     = useState(false);
+
+  // ── Cargar gastos ──────────────────────────────────────
+  const cargarGastos = async () => {
+    if (!user?.id) return;
+    setCargando(true);
+    setError('');
+    try {
+      const data = await gastosApi.getAll(user.id);
+      setGastos(data.map(mapearGasto));
+    } catch {
+      setError('No se pudieron cargar los gastos. Verifica que el backend este activo.');
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { cargarGastos(); }, [user?.id]);
+  const filtrados = gastos.filter(g =>
+    g.descripcion.toLowerCase().includes(search.toLowerCase()) ||
+    g.comercio.toLowerCase().includes(search.toLowerCase())
+  );
+
+  // ── CREAR ──────────────────────────────────────────────
+  const handleChangeCrear = (e) => {
+    setFormCrear({ ...formCrear, [e.target.name]: e.target.value });
+    setMsgCrear('');
+  };
+
+  const handleCrear = async () => {
+    if (!formCrear.descripcion || !formCrear.valor || !formCrear.fecha) {
+      setMsgCrear('Descripcion, valor y fecha son obligatorios.');
+      return;
+    }
+    setGuardando(true);
+    try {
+      await gastosApi.create(user.id, construirPayload(formCrear));
+      setMsgCrear('Gasto creado correctamente.');
+      setFormCrear(FORM_VACIO);
+      await cargarGastos();
+      setTimeout(() => { setModalCrear(false); setMsgCrear(''); }, 1200);
+    } catch (err) {
+      setMsgCrear('Error: ' + err.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const cerrarModalCrear = () => {
+    setModalCrear(false);
+    setFormCrear(FORM_VACIO);
+    setMsgCrear('');
+  };
+
+  // ── EDITAR ─────────────────────────────────────────────
+  const abrirEditar = (g) => {
+    setGastoEdit(g);
+    setFormEditar({
+      descripcion: g.descripcion,
+      valor:       String(g.valor),
+      fecha:       g.fecha,
+      // ✅ minuscula
+      comercio:    g.comercio   || '',
+      medioPago:   g.medioPago  || '',
+      ubicacion:   g.ubicacion  || '',
+      imagen:      g.imagen     || '',
+      maximo:      String(g.maximo || 0),
+      minimo:      g.minimo     || '0',
+    });
+    setMsgEditar('');
+    setModalEditar(true);
+  };
+
+  const handleChangeEditar = (e) => {
+    setFormEditar({ ...formEditar, [e.target.name]: e.target.value });
+    setMsgEditar('');
+  };
+
+  const handleActualizar = async () => {
+    if (!formEditar.descripcion || !formEditar.valor || !formEditar.fecha) {
+      setMsgEditar('Descripcion, valor y fecha son obligatorios.');
+      return;
+    }
+    setActualizando(true);
+    try {
+      await gastosApi.update(gastoEdit.id, construirPayload(formEditar));
+      setMsgEditar('Gasto actualizado correctamente.');
+      await cargarGastos();
+      setTimeout(() => { setModalEditar(false); setMsgEditar(''); }, 1200);
+    } catch (err) {
+      setMsgEditar('Error: ' + err.message);
+    } finally {
+      setActualizando(false);
+    }
+  };
+
+  const cerrarModalEditar = () => {
+    setModalEditar(false);
+    setMsgEditar('');
+  };
+
+  // ── ELIMINAR ───────────────────────────────────────────
+  const abrirEliminar = (g) => {
+    setGastoAEliminar(g);
+    setModalEliminar(true);
+  };
+
+  const handleEliminar = async () => {
+    if (!gastoAEliminar) return;
+    setEliminando(true);
+    try {
+      await gastosApi.delete(gastoAEliminar.id);
+      await cargarGastos();
+      setModalEliminar(false);
+      setGastoAEliminar(null);
+    } catch {
+      alert('No se pudo eliminar el gasto.');
+    } finally {
+      setEliminando(false);
+    }
+  };
+
+  const cerrarModalEliminar = () => {
+    setModalEliminar(false);
+    setGastoAEliminar(null);
+  };
+
+  // ── RENDER ─────────────────────────────────────────────
   return (
-    <AppLayout activePage="gastos" onNuevoGasto={() => setModalOpen(true)}>
+    <AppLayout activePage="gastos" onNuevoGasto={() => setModalCrear(true)}>
+
       <div className="page-header">
         <div>
           <div className="page-title">Todos los gastos</div>
-          <div className="page-subtitle">24 transacciones registradas · Mayo 2025</div>
+          <div className="page-subtitle">{gastos.length} gastos registrados</div>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn-secondary"><i className="ti ti-download"></i>Exportar CSV</button>
-          <button className="btn-primary" onClick={() => setModalOpen(true)}>
+          <button className="btn-primary" onClick={() => setModalCrear(true)}>
             <i className="ti ti-plus"></i>Nuevo gasto
           </button>
         </div>
       </div>
 
       {/* KPIs */}
-      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 20 }}>
+      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', marginBottom: 20 }}>
         <div className="kpi-card">
-          <div className="kpi-top"><div className="kpi-icon red"><i className="ti ti-arrow-down-circle"></i></div><span className="kpi-mini-badge down">+8%</span></div>
+          <div className="kpi-top">
+            <div className="kpi-icon red"><i className="ti ti-arrow-down-circle"></i></div>
+          </div>
           <div className="kpi-label">Total gastado</div>
-          <div className="kpi-value red">$2.380.000</div>
-          <div className="kpi-trend down"><i className="ti ti-calendar"></i>Mayo 2025</div>
+          <div className="kpi-value red">
+            ${fmt(gastos.reduce((a, g) => a + (g.valor || 0), 0))}
+          </div>
+          <div className="kpi-trend" style={{ color: 'var(--gray2)' }}>
+            <i className="ti ti-calendar"></i>Todos los registros
+          </div>
         </div>
+
         <div className="kpi-card">
-          <div className="kpi-top"><div className="kpi-icon purple"><i className="ti ti-receipt"></i></div><span className="kpi-mini-badge" style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--gray2)' }}>24</span></div>
+          <div className="kpi-top">
+            <div className="kpi-icon purple"><i className="ti ti-receipt"></i></div>
+          </div>
           <div className="kpi-label">Transacciones</div>
-          <div className="kpi-value purple">24</div>
-          <div className="kpi-trend" style={{ color: 'var(--gray2)' }}><i className="ti ti-calendar"></i>Este mes</div>
+          <div className="kpi-value purple">{gastos.length}</div>
+          <div className="kpi-trend" style={{ color: 'var(--gray2)' }}>
+            <i className="ti ti-database"></i>Total registros
+          </div>
         </div>
+
         <div className="kpi-card">
-          <div className="kpi-top"><div className="kpi-icon yellow"><i className="ti ti-calculator"></i></div></div>
+          <div className="kpi-top">
+            <div className="kpi-icon yellow"><i className="ti ti-calculator"></i></div>
+          </div>
           <div className="kpi-label">Promedio por gasto</div>
-          <div className="kpi-value yellow">$99.167</div>
-          <div className="kpi-trend" style={{ color: 'var(--gray2)' }}><i className="ti ti-math-function"></i>Promedio simple</div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-top"><div className="kpi-icon blue"><i className="ti ti-tag"></i></div><span className="kpi-mini-badge" style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--gray2)' }}>5</span></div>
-          <div className="kpi-label">Categorías activas</div>
-          <div className="kpi-value blue">5</div>
-          <div className="kpi-trend" style={{ color: 'var(--gray2)' }}><i className="ti ti-folder"></i>Con registros</div>
+          <div className="kpi-value yellow">
+            ${gastos.length
+              ? fmt(Math.round(gastos.reduce((a, g) => a + (g.valor || 0), 0) / gastos.length))
+              : 0}
+          </div>
+          <div className="kpi-trend" style={{ color: 'var(--gray2)' }}>
+            <i className="ti ti-math-function"></i>Promedio simple
+          </div>
         </div>
       </div>
 
-      {/* Tab pills */}
-      <div style={{ display: 'flex', gap: 4, background: 'var(--card2)', borderRadius: 10, padding: 4, marginBottom: 20, width: 'fit-content' }}>
-        {['Todos (24)', 'Gastos (22)', 'Ingresos (2)', 'Pendientes (1)'].map((t, i) => (
-          <button key={i} style={{
-            padding: '7px 16px', borderRadius: 7, fontSize: 13,
-            fontWeight: i === 0 ? 600 : 500,
-            color: i === 0 ? '#fff' : 'var(--gray2)',
-            background: i === 0 ? 'var(--orange)' : 'none',
-            border: 'none', cursor: 'pointer',
-          }}>{t}</button>
-        ))}
-      </div>
-
-      {/* Table */}
+      {/* Tabla */}
       <div className="section-card">
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '14px 22px 0', flexWrap: 'wrap', marginBottom: 14 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '14px 22px 0', marginBottom: 14 }}>
           <div className="search-box" style={{ flex: 1, maxWidth: 340 }}>
             <i className="ti ti-search"></i>
             <input
               type="text"
-              placeholder="Buscar comercio, descripción..."
+              placeholder="Buscar por descripcion o comercio..."
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <select className="select-filter" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
-            <option value="">Todas las categorías</option>
-            {CATEGORIAS.map(c => <option key={c.id} value={c.nombre}>{c.emoji} {c.nombre}</option>)}
-          </select>
-          <button className="filter-btn"><i className="ti ti-calendar"></i>Mayo 2025</button>
+          <button className="btn-secondary" onClick={cargarGastos}>
+            <i className="ti ti-refresh"></i>Actualizar
+          </button>
         </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 28 }}><input type="checkbox" style={{ accentColor: 'var(--orange)', width: 14, height: 14, cursor: 'pointer' }} /></th>
-                <th>Comercio / Descripción</th>
-                <th>Categoría</th>
-                <th>Fecha</th>
-                <th>Medio de pago</th>
-                <th style={{ textAlign: 'right' }}>Valor</th>
-                <th style={{ textAlign: 'center', width: 80 }}>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(g => (
-                <tr key={g.id}>
-                  <td><input type="checkbox" style={{ accentColor: 'var(--orange)', width: 14, height: 14, cursor: 'pointer' }} /></td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div className="tx-row-icon" style={{ background: 'rgba(155,114,247,0.1)' }}>{g.icono}</div>
-                      <div>
-                        <div className="tx-row-name">{g.nombre}</div>
-                        <div className="tx-row-sub">{g.sub}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td><span className={`badge ${g.catClass}`}>{g.cat}</span></td>
-                  <td style={{ color: 'var(--gray2)', fontSize: 12.5, fontWeight: 500 }}>{g.fecha}</td>
-                  <td>
-                    <div className="medio-tag">
-                      <i className={`ti ${g.medioIcon}`}></i>{g.medio}
-                    </div>
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <span className="amount neg">${fmt(g.valor)}</span>
-                  </td>
-                  <td style={{ textAlign: 'center' }}>
-                    <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
-                      <button className="action-icon-btn" title="Editar"><i className="ti ti-edit"></i></button>
-                      <button className="action-icon-btn danger" title="Eliminar"><i className="ti ti-trash"></i></button>
-                    </div>
-                  </td>
+
+        {cargando && (
+          <div style={{ textAlign: 'center', padding: 40, color: 'var(--gray2)' }}>
+            <i className="ti ti-loader-2" style={{ fontSize: 28, display: 'block', marginBottom: 8 }}></i>
+            Cargando gastos...
+          </div>
+        )}
+
+        {!cargando && error && (
+          <div style={{ textAlign: 'center', padding: 40, color: 'var(--red)', fontSize: 13 }}>
+            <i className="ti ti-alert-circle" style={{ fontSize: 28, display: 'block', marginBottom: 8 }}></i>
+            {error}
+          </div>
+        )}
+
+        {!cargando && !error && (
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Descripcion</th>
+                  <th>Comercio</th>
+                  <th>Fecha</th>
+                  <th>Medio de pago</th>
+                  <th>Ubicacion</th>
+                  <th style={{ textAlign: 'right' }}>Valor</th>
+                  <th style={{ textAlign: 'center', width: 80 }}>Acciones</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {filtrados.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--gray2)' }}>
+                      No hay gastos registrados.
+                    </td>
+                  </tr>
+                ) : filtrados.map(g => (
+                  <tr key={g.id}>
+                    <td>
+                      <div className="tx-row-name">{g.descripcion || 'Sin descripcion'}</div>
+                    </td>
+                    {/* ✅ minuscula */}
+                    <td style={{ color: 'var(--gray2)', fontSize: 12.5 }}>
+                      {g.comercio || 'Sin comercio'}
+                    </td>
+                    <td style={{ color: 'var(--gray2)', fontSize: 12.5 }}>{g.fecha}</td>
+                    <td>
+                      <div className="medio-tag">
+                        <i className="ti ti-credit-card"></i>
+                        {g.medioPago || 'Sin medio'}
+                      </div>
+                    </td>
+                    <td style={{ color: 'var(--gray2)', fontSize: 12.5 }}>
+                      {g.ubicacion || 'Sin ubicacion'}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <span className="amount neg">${fmt(g.valor || 0)}</span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+                        <button className="action-icon-btn" title="Editar" onClick={() => abrirEditar(g)}>
+                          <i className="ti ti-edit"></i>
+                        </button>
+                        <button className="action-icon-btn danger" title="Eliminar" onClick={() => abrirEliminar(g)}>
+                          <i className="ti ti-trash"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
-      {/* Modal */}
+      {/* Modal CREAR */}
       <Modal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        title="Registrar gasto"
+        open={modalCrear}
+        onClose={cerrarModalCrear}
+        title="Registrar nuevo gasto"
         footer={
           <>
-            <button className="btn-ghost" onClick={() => setModalOpen(false)}>Cancelar</button>
-            <button className="btn-primary"><i className="ti ti-check"></i>Guardar gasto</button>
+            <button className="btn-ghost" onClick={cerrarModalCrear}>Cancelar</button>
+            <button className="btn-primary" onClick={handleCrear} disabled={guardando}>
+              <i className="ti ti-check"></i>
+              {guardando ? 'Guardando...' : 'Guardar gasto'}
+            </button>
           </>
         }
       >
+        <MensajeModal msg={msgCrear} />
+        <FormGasto form={formCrear} onChange={handleChangeCrear} />
+      </Modal>
+
+      {/* Modal EDITAR */}
+      <Modal
+        open={modalEditar}
+        onClose={cerrarModalEditar}
+        title="Editar gasto"
+        footer={
+          <>
+            <button className="btn-ghost" onClick={cerrarModalEditar}>Cancelar</button>
+            <button className="btn-primary" onClick={handleActualizar} disabled={actualizando}>
+              <i className="ti ti-check"></i>
+              {actualizando ? 'Actualizando...' : 'Actualizar gasto'}
+            </button>
+          </>
+        }
+      >
+        <MensajeModal msg={msgEditar} />
+        <FormGasto form={formEditar} onChange={handleChangeEditar} />
+      </Modal>
+
+      {/* Modal ELIMINAR */}
+      <Modal
+        open={modalEliminar}
+        onClose={cerrarModalEliminar}
+        title="Confirmar eliminacion"
+        footer={
+          <>
+            <button className="btn-ghost" onClick={cerrarModalEliminar}>Cancelar</button>
+            <button
+              onClick={handleEliminar}
+              disabled={eliminando}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '8px 16px', background: 'var(--red)', color: '#fff',
+                border: 'none', borderRadius: 9, fontSize: 12.5, fontWeight: 600,
+                cursor: eliminando ? 'not-allowed' : 'pointer',
+              }}
+            >
+              <i className="ti ti-trash"></i>
+              {eliminando ? 'Eliminando...' : 'Si, eliminar'}
+            </button>
+          </>
+        }
+      >
+        <p style={{ fontSize: 13, color: 'var(--gray2)', textAlign: 'center', padding: '12px 0' }}>
+          Estas seguro de que deseas eliminar el gasto{' '}
+          <strong style={{ color: 'var(--white)' }}>
+            "{gastoAEliminar?.descripcion}"
+          </strong>{' '}
+          por valor de{' '}
+          <strong style={{ color: 'var(--red)' }}>
+            ${gastoAEliminar ? fmt(gastoAEliminar.valor) : 0}
+          </strong>?
+          <br /><br />
+          <span style={{ color: 'var(--red)', fontSize: 12 }}>
+            Esta accion no se puede deshacer.
+          </span>
+        </p>
+      </Modal>
+
+    </AppLayout>
+  );
+}
+
+// ── Mensaje feedback ───────────────────────────────────
+function MensajeModal({ msg }) {
+  if (!msg) return null;
+  const esExito = msg.toLowerCase().startsWith('gasto');
+  return (
+    <div style={{
+      padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 13,
+      background: esExito ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)',
+      color:      esExito ? 'var(--green)'          : 'var(--red)',
+      border:     esExito
+        ? '1px solid rgba(52,211,153,0.3)'
+        : '1px solid rgba(248,113,113,0.3)',
+    }}>
+      {msg}
+    </div>
+  );
+}
+
+// ── Formulario reutilizable ────────────────────────────
+function FormGasto({ form, onChange }) {
+  return (
+    <>
+      <div className="form-group">
+        <label className="form-label">Descripcion *</label>
+        <input
+          className="form-input"
+          name="descripcion"
+          type="text"
+          placeholder="Que compraste?"
+          value={form.descripcion}
+          onChange={onChange}
+        />
+      </div>
+
+      <div className="form-row">
         <div className="form-group">
-          <label className="form-label">Comercio / Descripción</label>
-          <input className="form-input" type="text" placeholder="Ej: Éxito, Netflix, Metro..." />
-        </div>
-        <div className="form-row">
-          <div className="form-group">
-            <label className="form-label">Valor</label>
-            <input className="form-input" type="text" placeholder="$0" />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Fecha</label>
-            <input className="form-input" type="date" defaultValue="2025-05-08" />
-          </div>
+          <label className="form-label">Valor (COP) *</label>
+          <input
+            className="form-input"
+            name="valor"
+            type="number"
+            placeholder="0"
+            value={form.valor}
+            onChange={onChange}
+          />
         </div>
         <div className="form-group">
-          <label className="form-label">Categoría</label>
-          <select className="form-input">
-            <option>-- Selecciona --</option>
-            {CATEGORIAS.map(c => <option key={c.id}>{c.emoji} {c.nombre}</option>)}
-          </select>
+          <label className="form-label">Fecha *</label>
+          <input
+            className="form-input"
+            name="fecha"
+            type="date"
+            value={form.fecha}
+            onChange={onChange}
+          />
         </div>
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">Comercio</label>
+        {/* ✅ name="comercio" en minuscula */}
+        <input
+          className="form-input"
+          name="comercio"
+          type="text"
+          placeholder="Ej: Exito, Netflix..."
+          value={form.comercio}
+          onChange={onChange}
+        />
+      </div>
+
+      <div className="form-row">
         <div className="form-group">
           <label className="form-label">Medio de pago</label>
-          <select className="form-input">
-            <option>-- Selecciona --</option>
-            <option>Visa •4521</option>
-            <option>MC •7890</option>
-            <option>Nequi</option>
+          <select className="form-input" name="medioPago" value={form.medioPago} onChange={onChange}>
+            <option value="">-- Selecciona --</option>
+            <option value="Efectivo">Efectivo</option>
+            <option value="Tarjeta Debito">Tarjeta Debito</option>
+            <option value="Tarjeta Credito">Tarjeta Credito</option>
+            <option value="Nequi">Nequi</option>
+            <option value="Daviplata">Daviplata</option>
+            <option value="PSE">PSE</option>
           </select>
         </div>
-      </Modal>
-    </AppLayout>
+        <div className="form-group">
+          <label className="form-label">Ubicacion</label>
+          <input
+            className="form-input"
+            name="ubicacion"
+            type="text"
+            placeholder="Ej: Medellin"
+            value={form.ubicacion}
+            onChange={onChange}
+          />
+        </div>
+      </div>
+    </>
   );
 }

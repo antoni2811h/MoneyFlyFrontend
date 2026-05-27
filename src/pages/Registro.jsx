@@ -9,7 +9,7 @@ const inputStyle = {
 };
 
 export default function Registro() {
-  const { register } = useContext(AuthContext);
+  const { register, login } = useContext(AuthContext);
   const navigate = useNavigate();
 
   const [form, setForm] = useState({
@@ -17,7 +17,7 @@ export default function Registro() {
     tipoDoc: '', documento: '', edad: '',
     genero: '', telefono: '', ocupacion: '',
   });
-  const [error, setError] = useState('');
+  const [error, setError]     = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleChange = (e) => {
@@ -32,17 +32,33 @@ export default function Registro() {
       return;
     }
     setLoading(true);
+
+    // 1️⃣ Registrar el usuario en el backend
     const resultado = await register(form);
+
+    if (!resultado.success) {
+      setLoading(false);
+      setError(resultado.message || 'Error al registrarse. Intenta de nuevo.');
+      return;
+    }
+
+    // ✅ CORRECCIÓN: después de registrar, hacer login automático
+    // Así el usuario queda con sesión activa y puede entrar al Dashboard
+    const loginResultado = await login(form.correo, form.contrasena);
     setLoading(false);
-    if (resultado.success) {
+
+    if (loginResultado.success) {
       navigate('/', { replace: true });
     } else {
-      setError(resultado.message || 'Error al registrarse. Intenta de nuevo.');
+      // El registro fue exitoso pero el login automático falló
+      // Se manda al login para que entre manualmente
+      navigate('/login', { replace: true });
     }
   };
 
   return (
     <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", background: '#0F1720', color: '#F9FAFB', minHeight: '100vh' }}>
+
       {/* Header */}
       <header style={{ background: '#2D4A63', padding: '1rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -78,7 +94,7 @@ export default function Registro() {
         </a>
       </section>
 
-      {/* Form */}
+      {/* Formulario */}
       <section style={{ background: '#1C2430', padding: '3rem 2rem' }} id="registro">
         <div style={{ maxWidth: 500, margin: '0 auto', background: '#0F1720', padding: '2rem', borderRadius: 12 }}>
           <h2 style={{ textAlign: 'center', marginBottom: '1.5rem' }}>Crear cuenta</h2>
@@ -98,10 +114,12 @@ export default function Registro() {
             <label style={{ display: 'block', marginBottom: 5, fontSize: '0.9rem' }}>Nombres *</label>
             <input name="nombres" type="text" placeholder="Tu nombre completo" value={form.nombres} onChange={handleChange} style={inputStyle} />
           </div>
+
           <div style={{ marginBottom: '1rem' }}>
             <label style={{ display: 'block', marginBottom: 5, fontSize: '0.9rem' }}>Correo *</label>
             <input name="correo" type="email" placeholder="correo@ejemplo.com" value={form.correo} onChange={handleChange} style={inputStyle} />
           </div>
+
           <div style={{ marginBottom: '1rem' }}>
             <label style={{ display: 'block', marginBottom: 5, fontSize: '0.9rem' }}>Contraseña *</label>
             <input name="contrasena" type="password" placeholder="Mínimo 8 caracteres" value={form.contrasena} onChange={handleChange} style={inputStyle} />
@@ -110,12 +128,13 @@ export default function Registro() {
           <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
             <div style={{ flex: 1 }}>
               <label style={{ display: 'block', marginBottom: 5, fontSize: '0.9rem' }}>Tipo documento</label>
+              {/* ✅ CORRECCIÓN: valores corregidos para coincidir exactamente con el enum TipoDocumento.java */}
               <select name="tipoDoc" value={form.tipoDoc} onChange={handleChange} style={inputStyle}>
                 <option value="">Seleccionar</option>
-                <option value="CC">Cédula</option>
-                <option value="CE">Cédula Extranjería</option>
-                <option value="TI">Tarjeta Identidad</option>
-                <option value="PP">Pasaporte</option>
+                <option value="cedula">Cédula</option>
+                <option value="tarjeta_Identidad">Tarjeta de Identidad</option>
+                <option value="pasaporte">Pasaporte</option>
+                <option value="permiso_Permanecia">Permiso de Permanencia</option>
               </select>
             </div>
             <div style={{ flex: 1 }}>
@@ -131,11 +150,12 @@ export default function Registro() {
             </div>
             <div style={{ flex: 1 }}>
               <label style={{ display: 'block', marginBottom: 5, fontSize: '0.9rem' }}>Género</label>
+              {/* ✅ CORRECCIÓN: valores corregidos para coincidir exactamente con el enum Genero.java */}
               <select name="genero" value={form.genero} onChange={handleChange} style={inputStyle}>
                 <option value="">Seleccionar</option>
-                <option value="M">Masculino</option>
-                <option value="F">Femenino</option>
-                <option value="O">Otro</option>
+                <option value="masculino">Masculino</option>
+                <option value="femenino">Femenino</option>
+                <option value="prefieroNoDecirlo">Prefiero no decirlo</option>
               </select>
             </div>
           </div>
@@ -155,7 +175,8 @@ export default function Registro() {
             onClick={handleSubmit}
             disabled={loading}
             style={{
-              width: '100%', padding: 12, background: loading ? '#cc6230' : '#FF7A3D',
+              width: '100%', padding: 12,
+              background: loading ? '#cc6230' : '#FF7A3D',
               color: '#F9FAFB', border: 'none', borderRadius: 6,
               cursor: loading ? 'not-allowed' : 'pointer',
               fontSize: '1rem', fontFamily: 'inherit',

@@ -1,173 +1,307 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect, useContext } from 'react';
 import AppLayout from '../components/AppLayout';
 import Modal from '../components/Modal';
-import { GASTOS, CATEGORIAS, MEDIOS, fmt, pctBadgeClass } from '../data/mockData';
+import { AuthContext } from '../context/AuthContext';
+import { gastosApi } from '../services/api';
+
+import lineasMayores50    from '../assets/graficos/lineas_mayores_50.png';
+import barrasTipoDoc      from '../assets/graficos/barras_tipoDocumento.png';
+import tortaTipoDoc       from '../assets/graficos/torta_tipoDocumento.png';
+import lineasComercioTec  from '../assets/graficos/lineas_comercio_tecnologico.png';
+import barrasComercioUbic from '../assets/graficos/barras_comercio_ubicacion.png';
+import mapaCalor          from '../assets/graficos/calor_sector_ubicacion.png';
+
+// ✅ "comercio" en minuscula — coincide con Gastos.java
+const FORM_INICIAL = {
+  descripcion: '', valor: '', fecha: '', comercio: '',
+  medioPago: '', ubicacion: '', imagen: '', maximo: '', minimo: '',
+};
 
 export default function Dashboard() {
-  const [modalOpen, setModalOpen] = useState(false);
+  const { user } = useContext(AuthContext);
+
+  const [totalUsuarios,  setTotalUsuarios]  = useState(null);
+  const [totalComercios, setTotalComercios] = useState(null);
+  const [gruposEdad,     setGruposEdad]     = useState(null);
+
+  const [modalOpen,  setModalOpen]  = useState(false);
+  const [form,       setForm]       = useState(FORM_INICIAL);
+  const [guardando,  setGuardando]  = useState(false);
+  const [msgGuardar, setMsgGuardar] = useState('');
+
+  useEffect(() => {
+    fetch('/resultados/usuarios_por_tipo_doc.json')
+      .then(r => r.json())
+      .then(data => setTotalUsuarios(data.reduce((acc, d) => acc + (d.cantidad || 0), 0)))
+      .catch(() => setTotalUsuarios(50));
+
+    fetch('/resultados/comercios_alto_gasto.json')
+      .then(r => r.json())
+      .then(data => setTotalComercios(data.reduce((acc, d) => acc + (d.conteo || 0), 0)))
+      .catch(() => setTotalComercios(32));
+
+    fetch('/resultados/usuarios_por_grupo_edad.json')
+      .then(r => r.json())
+      .then(data => setGruposEdad(data.length))
+      .catch(() => setGruposEdad(4));
+  }, []);
+
+  const handleChange = (e) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+    setMsgGuardar('');
+  };
+
+  const handleGuardar = async () => {
+    if (!form.descripcion || !form.valor || !form.fecha) {
+      setMsgGuardar('Descripcion, valor y fecha son obligatorios.');
+      return;
+    }
+    if (!user?.id) {
+      setMsgGuardar('No hay sesion activa. Inicia sesion nuevamente.');
+      return;
+    }
+    setGuardando(true);
+    setMsgGuardar('');
+
+    // ✅ Todos los campos en minuscula — coinciden exactamente con Gastos.java
+    const payload = {
+      descripcion: form.descripcion,
+      valor:       parseInt(form.valor, 10) || 0,
+      fecha:       form.fecha,
+      comercio:    form.comercio  || 'Sin comercio',
+      medioPago:   form.medioPago || 'Efectivo',
+      ubicacion:   form.ubicacion || 'Sin ubicacion',
+      imagen:      form.imagen    || null,
+      maximo:      parseInt(form.maximo, 10) || 0,
+      minimo:      form.minimo    || '0',
+    };
+
+    try {
+      await gastosApi.create(user.id, payload);
+      setMsgGuardar('Gasto registrado correctamente.');
+      setForm(FORM_INICIAL);
+      setTimeout(() => { setModalOpen(false); setMsgGuardar(''); }, 1200);
+    } catch (err) {
+      setMsgGuardar('Error: ' + err.message);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const handleCerrarModal = () => {
+    setModalOpen(false);
+    setForm(FORM_INICIAL);
+    setMsgGuardar('');
+  };
 
   return (
     <AppLayout activePage="dashboard" onNuevoGasto={() => setModalOpen(true)}>
+
       <div className="page-header">
         <div>
           <div className="page-title">Dashboard</div>
-          <div className="page-subtitle">Resumen de tus gastos de este mes</div>
+          <div className="page-subtitle">
+            Bienvenido, {user?.name || 'Usuario'} - Analisis de datos MoneyFly
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn-secondary"><i className="ti ti-filter"></i>Filtrar por mes</button>
-          <button className="btn-primary" onClick={() => setModalOpen(true)}>
-            <i className="ti ti-plus"></i>Nuevo gasto
-          </button>
-        </div>
+        <button className="btn-primary" onClick={() => setModalOpen(true)}>
+          <i className="ti ti-plus"></i>Nuevo gasto
+        </button>
       </div>
 
-      {/* KPI Grid */}
+      {/* KPIs */}
       <div className="kpi-grid" style={{ marginBottom: 24 }}>
         <div className="kpi-card">
           <div className="kpi-top">
-            <div className="kpi-icon blue"><i className="ti ti-cash"></i></div>
-            <span className="kpi-mini-badge">+12%</span>
+            <div className="kpi-icon blue"><i className="ti ti-users"></i></div>
           </div>
-          <div className="kpi-label">Saldo disponible</div>
-          <div className="kpi-value blue">$16.200.000</div>
-          <div className="kpi-trend up"><i className="ti ti-trending-up"></i>Última actualización hoy</div>
+          <div className="kpi-label">Total usuarios</div>
+          <div className="kpi-value blue">{totalUsuarios ?? '-'}</div>
+          <div className="kpi-trend"><i className="ti ti-database"></i>Registrados</div>
         </div>
+
         <div className="kpi-card">
           <div className="kpi-top">
-            <div className="kpi-icon orange"><i className="ti ti-receipt"></i></div>
-            <span className="kpi-mini-badge red">+8%</span>
+            <div className="kpi-icon orange"><i className="ti ti-building-store"></i></div>
           </div>
-          <div className="kpi-label">Gasto del mes</div>
-          <div className="kpi-value orange">$2.850.400</div>
-          <div className="kpi-trend up"><i className="ti ti-trending-up"></i>Comparado con mes anterior</div>
+          <div className="kpi-label">Comercios alto gasto</div>
+          <div className="kpi-value orange">{totalComercios ?? '-'}</div>
+          <div className="kpi-trend"><i className="ti ti-trending-up"></i>Total mayor $25.000</div>
         </div>
+
         <div className="kpi-card">
           <div className="kpi-top">
-            <div className="kpi-icon green"><i className="ti ti-piggy-bank"></i></div>
-            <span className="kpi-mini-badge">65%</span>
+            <div className="kpi-icon green"><i className="ti ti-chart-bar"></i></div>
           </div>
-          <div className="kpi-label">Límite de categorías</div>
-          <div className="kpi-value green">3 alertas</div>
-          <div className="kpi-trend down"><i className="ti ti-alert-triangle"></i>🍔 Comida al 130%</div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-top">
-            <div className="kpi-icon red"><i className="ti ti-alert-circle"></i></div>
-          </div>
-          <div className="kpi-label">Recomendaciones</div>
-          <div className="kpi-value red">2 nuevas</div>
-          <div className="kpi-trend"><i className="ti ti-info-circle"></i>Revisa tus ajustes</div>
+          <div className="kpi-label">Grupos de edad</div>
+          <div className="kpi-value green">{gruposEdad ?? '-'}</div>
+          <div className="kpi-trend"><i className="ti ti-users"></i>Segmentos</div>
         </div>
       </div>
 
-      {/* Gastos recientes */}
-      <div className="section-card" style={{ marginBottom: 24 }}>
-        <div className="section-head">
-          <h2>Gastos recientes</h2>
-          <Link to="/gastos">Ver todo</Link>
+      {/* Graficas fila 1 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+        <div className="section-card" style={{ padding: 20 }}>
+          <div className="section-head"><h2>Usuarios mayores de 50 por genero</h2></div>
+          <img
+            src={lineasMayores50}
+            alt="Usuarios mayores de 50"
+            style={{ width: '100%', height: 'auto', borderRadius: 8 }}
+          />
+          <p style={{ fontSize: 11, color: 'var(--gray)', marginTop: 8 }}>
+            Distribucion de usuarios mayores de 50 por genero.
+          </p>
         </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table className="gasto-table">
-            <thead>
-              <tr>
-                <th>Concepto</th>
-                <th>Categoría</th>
-                <th>Medio de pago</th>
-                <th>Fecha</th>
-                <th className="text-right">Valor</th>
-              </tr>
-            </thead>
-            <tbody>
-              {GASTOS.slice(0, 5).map(g => (
-                <tr key={g.id}>
-                  <td><strong>{g.nombre}</strong></td>
-                  <td><span className={`badge ${g.catClass}`}>{g.cat}</span></td>
-                  <td><span style={{ fontSize: 11, color: 'var(--gray)' }}>{g.icono} {g.medio}</span></td>
-                  <td><span style={{ fontSize: 11, color: 'var(--gray)' }}>{g.fecha}</span></td>
-                  <td className="text-right" style={{ color: 'var(--orange)', fontWeight: 700, fontSize: 13 }}>
-                    ${fmt(g.valor)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="section-card" style={{ padding: 20 }}>
+          <div className="section-head"><h2>Usuarios por tipo de documento</h2></div>
+          <img
+            src={barrasTipoDoc}
+            alt="Tipo de documento"
+            style={{ width: '100%', height: 'auto', borderRadius: 8 }}
+          />
+          <p style={{ fontSize: 11, color: 'var(--gray)', marginTop: 8 }}>
+            Distribucion de usuarios segun su tipo de documento.
+          </p>
         </div>
       </div>
 
-      {/* Categorías y medios */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-        <div className="section-card">
-          <div className="section-head">
-            <h2>Categorías</h2>
-            <Link to="/categorias">Administrar</Link>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {CATEGORIAS.slice(0, 3).map(c => (
-              <div key={c.id} style={{ padding: '10px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', fontSize: 12.5 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 18 }}>{c.emoji}</span>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{c.nombre}</div>
-                    <div style={{ fontSize: 11, color: 'var(--gray)' }}>${c.gasto.toLocaleString('es-CO')}</div>
-                  </div>
-                </div>
-                <span className={`badge ${pctBadgeClass(c.pct)}`}>{c.pct}%</span>
-              </div>
-            ))}
-          </div>
+      {/* Graficas fila 2 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+        <div className="section-card" style={{ padding: 20 }}>
+          <div className="section-head"><h2>Proporcion por tipo de documento</h2></div>
+          <img
+            src={tortaTipoDoc}
+            alt="Proporcion documentos"
+            style={{ width: '100%', height: 'auto', borderRadius: 8 }}
+          />
+          <p style={{ fontSize: 11, color: 'var(--gray)', marginTop: 8 }}>
+            Proporcion de cada tipo de documento.
+          </p>
         </div>
-
-        <div className="section-card">
-          <div className="section-head">
-            <h2>Medios de pago</h2>
-            <Link to="/medios">Todos</Link>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {MEDIOS.slice(0, 3).map(m => (
-              <div key={m.id} style={{ padding: '10px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1 }}>
-                  <span style={{ fontWeight: 800, minWidth: 40, textTransform: 'uppercase', fontSize: 10, color: 'var(--gray)' }}>{m.franq}</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600 }}>{m.nombre}</div>
-                    <div style={{ fontSize: 11, color: 'var(--gray)' }}>•••• {m.num.slice(-4)}</div>
-                  </div>
-                </div>
-                <span className={`badge ${m.activo ? 'green' : 'gray'}`}>{m.activo ? 'Activo' : 'Inactivo'}</span>
-              </div>
-            ))}
-          </div>
+        <div className="section-card" style={{ padding: 20 }}>
+          <div className="section-head"><h2>Comercios tecnologicos por fecha</h2></div>
+          <img
+            src={lineasComercioTec}
+            alt="Comercios tecnologicos"
+            style={{ width: '100%', height: 'auto', borderRadius: 8 }}
+          />
+          <p style={{ fontSize: 11, color: 'var(--gray)', marginTop: 8 }}>
+            Actividad en el sector tecnologico por fecha.
+          </p>
         </div>
       </div>
 
-      {/* Modal Gasto */}
+      {/* Graficas fila 3 */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+        <div className="section-card" style={{ padding: 20 }}>
+          <div className="section-head"><h2>Comercios con alto gasto por ciudad</h2></div>
+          <img
+            src={barrasComercioUbic}
+            alt="Alto gasto por ciudad"
+            style={{ width: '100%', height: 'auto', borderRadius: 8 }}
+          />
+          <p style={{ fontSize: 11, color: 'var(--gray)', marginTop: 8 }}>
+            Ciudades con mayor concentracion de comercios con alto gasto.
+          </p>
+        </div>
+        <div className="section-card" style={{ padding: 20 }}>
+          <div className="section-head"><h2>Sector comercial vs Ubicacion</h2></div>
+          <img
+            src={mapaCalor}
+            alt="Mapa de calor"
+            style={{ width: '100%', height: 'auto', borderRadius: 8 }}
+          />
+          <p style={{ fontSize: 11, color: 'var(--gray)', marginTop: 8 }}>
+            Intensidad de actividad por sector y ciudad.
+          </p>
+        </div>
+      </div>
+
+      {/* Modal nuevo gasto */}
       <Modal
         open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={handleCerrarModal}
         title="Registrar gasto"
         footer={
           <>
-            <button className="btn-ghost" onClick={() => setModalOpen(false)}>Cancelar</button>
-            <button className="btn-primary"><i className="ti ti-check"></i>Registrar gasto</button>
+            <button className="btn-ghost" onClick={handleCerrarModal}>Cancelar</button>
+            <button className="btn-primary" onClick={handleGuardar} disabled={guardando}>
+              <i className="ti ti-check"></i>
+              {guardando ? 'Guardando...' : 'Guardar gasto'}
+            </button>
           </>
         }
       >
+        {msgGuardar && (
+          <div style={{
+            padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 13,
+            background: msgGuardar.startsWith('Gasto') ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)',
+            color:      msgGuardar.startsWith('Gasto') ? 'var(--green)'          : 'var(--red)',
+            border:     msgGuardar.startsWith('Gasto')
+              ? '1px solid rgba(52,211,153,0.3)'
+              : '1px solid rgba(248,113,113,0.3)',
+          }}>
+            {msgGuardar}
+          </div>
+        )}
+
         <div className="form-group">
-          <label className="form-label">Valor</label>
-          <input className="form-input" type="number" placeholder="$0" />
+          <label className="form-label">Descripcion *</label>
+          <input
+            className="form-input" name="descripcion" type="text"
+            placeholder="Que compraste?" value={form.descripcion} onChange={handleChange}
+          />
         </div>
-        <div className="form-group">
-          <label className="form-label">Concepto</label>
-          <input className="form-input" type="text" placeholder="¿Qué compraste?" />
+
+        <div className="form-row">
+          <div className="form-group">
+            <label className="form-label">Valor (COP) *</label>
+            <input
+              className="form-input" name="valor" type="number"
+              placeholder="0" value={form.valor} onChange={handleChange}
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Fecha *</label>
+            <input
+              className="form-input" name="fecha" type="date"
+              value={form.fecha} onChange={handleChange}
+            />
+          </div>
         </div>
+
         <div className="form-group">
-          <label className="form-label">Categoría</label>
-          <select className="form-input">
-            <option>-- Selecciona categoría --</option>
-            {CATEGORIAS.map(c => <option key={c.id}>{c.emoji} {c.nombre}</option>)}
-          </select>
+          <label className="form-label">Comercio</label>
+          {/* ✅ name="comercio" en minuscula */}
+          <input
+            className="form-input" name="comercio" type="text"
+            placeholder="Ej: Exito, Netflix..." value={form.comercio} onChange={handleChange}
+          />
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label className="form-label">Medio de pago</label>
+            <select className="form-input" name="medioPago" value={form.medioPago} onChange={handleChange}>
+              <option value="">-- Selecciona --</option>
+              <option value="Efectivo">Efectivo</option>
+              <option value="Tarjeta Debito">Tarjeta Debito</option>
+              <option value="Tarjeta Credito">Tarjeta Credito</option>
+              <option value="Nequi">Nequi</option>
+              <option value="Daviplata">Daviplata</option>
+              <option value="PSE">PSE</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Ubicacion</label>
+            <input
+              className="form-input" name="ubicacion" type="text"
+              placeholder="Ej: Medellin" value={form.ubicacion} onChange={handleChange}
+            />
+          </div>
         </div>
       </Modal>
+
     </AppLayout>
   );
 }

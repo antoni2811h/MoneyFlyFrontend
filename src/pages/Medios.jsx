@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useContext } from 'react';
 import AppLayout from '../components/AppLayout';
 import Modal from '../components/Modal';
-import { MEDIOS } from "../data/mockData";
+import { MEDIOS } from '../data/mockData';
+import { AuthContext } from '../context/AuthContext';
+
 const cardStyles = {
   'visa-card': 'linear-gradient(135deg,#1a2f5e 0%,#2563a8 60%,#3b82f6 100%)',
   'mc-card':   'linear-gradient(135deg,#4a1a0a 0%,#b45309 60%,#f59e0b 100%)',
@@ -10,6 +12,10 @@ const cardStyles = {
 
 export default function Medios() {
   const [modalOpen, setModalOpen] = useState(false);
+
+  // ✅ CORRECCIÓN: obtener el nombre del usuario logueado desde el contexto
+  const { user } = useContext(AuthContext);
+  const nombreTitular = user?.name || 'Usuario';
 
   return (
     <AppLayout activePage="medios">
@@ -40,13 +46,18 @@ export default function Medios() {
                   <span style={{ background: 'rgba(248,113,113,0.25)', color: '#FCA5A5', fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5 }}>INACTIVO</span>
                 )}
               </div>
+
               <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 16, fontWeight: 700, letterSpacing: 3, color: 'rgba(255,255,255,0.9)' }}>
                 {m.num}
               </div>
+
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
                 <div>
                   <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.5, color: 'rgba(255,255,255,0.7)' }}>TITULAR</div>
-                  <div style={{ fontSize: 13, color: '#fff', letterSpacing: 0.5, marginTop: 2, fontWeight: 600 }}>{m.titular}</div>
+                  {/* ✅ CORRECCIÓN: muestra el nombre del usuario logueado en lugar del hardcodeado */}
+                  <div style={{ fontSize: 13, color: '#fff', letterSpacing: 0.5, marginTop: 2, fontWeight: 600 }}>
+                    {nombreTitular}
+                  </div>
                 </div>
                 <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 20, fontWeight: 800, color: 'rgba(255,255,255,0.85)' }}>{m.franq}</div>
               </div>
@@ -55,8 +66,8 @@ export default function Medios() {
             {/* Info Panel */}
             <div style={{ background: 'var(--card)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
               {[
-                { icon: 'ti-building-bank', label: 'Banco', value: m.banco },
-                { icon: 'ti-credit-card', label: 'Nombre', value: m.nombre },
+                { icon: 'ti-building-bank', label: 'Banco',   value: m.banco  },
+                { icon: 'ti-credit-card',   label: 'Nombre',  value: m.nombre },
               ].map(row => (
                 <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '13px 18px', borderBottom: '1px solid var(--border)' }}>
                   <span style={{ fontSize: 12, color: 'var(--gray)', display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -98,7 +109,9 @@ export default function Medios() {
         <div className="form-group">
           <label className="form-label">Franquicia</label>
           <select className="form-input">
-            <option>VISA</option><option>MC</option><option>PSE</option>
+            <option>VISA</option>
+            <option>MC</option>
+            <option>PSE</option>
           </select>
         </div>
       </Modal>

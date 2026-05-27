@@ -1,48 +1,8 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  AuthContext — MoneyFly
-//
-//  Endpoints reales de la API:
-//    GET  http://localhost/loginApi/            → verificar que la API está viva
-//    POST http://localhost/loginApi/login       → { correo, contrasena }
-//    POST http://localhost/loginApi/register    → { nombre, correo, contrasena }
-//
-//  Provee a toda la app:
-//    user            → datos del usuario autenticado (ver estructura abajo)
-//    isAuthenticated → boolean
-//    loading         → true mientras se verifica la sesión al arrancar
-//    login()         → inicia sesión
-//    register()      → crea cuenta nueva
-//    logout()        → cierra sesión
-//    updateUser()    → actualiza datos locales sin hacer logout
-//    getToken()      → JWT para peticiones protegidas
-//
-//  Estructura de `user` que usan los componentes:
-//    {
-//      id:              string | number,
-//      name:            string,   ← Topnav (iniciales), Sidebar, Perfil
-//      email:           string,   ← Perfil
-//      telefono:        string,   ← Perfil
-//      tipoDoc:         string,   ← Perfil  ('CC' | 'CE' | 'TI' | 'PP')
-//      documento:       string,   ← Perfil
-//      edad:            number,
-//      genero:          string,
-//      ocupacion:       string,   ← Perfil
-//      createdAt:       string,   ← Perfil  (ej. 'Enero 2025')
-//      totalGastos:     number,   ← Perfil
-//      totalCategorias: number,   ← Perfil
-//    }
-//
-//  NOTA: Tu API actual maneja { nombre, correo, contrasena }.
-//  Los campos extra del formulario de Registro.jsx se mapean aquí y el backend
-//  los ignorará hasta que los implementes. No necesitas tocar ningún page.
-//
-//  Para cambiar la URL, crea .env en la raíz:
-//    VITE_API_URL=http://localhost/loginApi
-// ─────────────────────────────────────────────────────────────────────────────
-
-const API_URL   = import.meta.env.VITE_API_URL || 'http://localhost/loginApi';
+// ✅ URL base — apunta a usuarios, no al endpoint completo
+const API_BASE  = import.meta.env.VITE_API_URL || 'http://localhost:8080/apimoneyfly/v1';
+const API_URL   = `${API_BASE}/usuarios`;
 const TOKEN_KEY = 'mf_token';
 const USER_KEY  = 'mf_user';
 
@@ -52,8 +12,6 @@ export function AuthProvider({ children }) {
   const [user,            setUser]            = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading,         setLoading]         = useState(true);
-
-  // ── Helpers internos ──────────────────────────────────────────────────────
 
   const saveSession = (token, userData) => {
     localStorage.setItem(TOKEN_KEY, token);
@@ -69,151 +27,117 @@ export function AuthProvider({ children }) {
     setIsAuthenticated(false);
   };
 
-  // Normaliza la respuesta de la API al formato que usan los componentes.
-  // Tu API devuelve { nombre, correo } → los componentes esperan { name, email }
-  const normalizeUser = (apiUser, extras = {}) => ({
-    id:              apiUser?.id              || null,
-    name:            apiUser?.nombre          || apiUser?.name  || extras.nombre || '',
-    email:           apiUser?.correo          || apiUser?.email || extras.correo || '',
-    telefono:        apiUser?.telefono        || extras.telefono   || '',
-    tipoDoc:         apiUser?.tipoDoc         || extras.tipoDoc    || '',
-    documento:       apiUser?.documento       || extras.documento  || '',
-    edad:            apiUser?.edad            || extras.edad       || null,
-    genero:          apiUser?.genero          || extras.genero     || '',
-    ocupacion:       apiUser?.ocupacion       || extras.ocupacion  || '',
+  // ✅ normalizeUser incluye "contrasena" para que Perfil.jsx
+  // pueda reenviarlo al backend sin perderlo al actualizar
+  const normalizeUser = (apiUser) => ({
+    id:              apiUser?.id              ?? null,
+    name:            apiUser?.nombres         || '',
+    email:           apiUser?.correo          || '',
+    telefono:        apiUser?.telefono        || '',
+    tipoDoc:         apiUser?.tipoDocumento   || '',
+    documento:       apiUser?.documento       || '',
+    edad:            apiUser?.edad            ?? null,
+    genero:          apiUser?.genero          || '',
+    ocupacion:       apiUser?.ocupacion       || '',
+    // ✅ AGREGADO — se necesita para reenviar al backend en el update de perfil
+    // El backend devuelve la contrasena en texto plano (no hay cifrado aun)
+    contrasena:      apiUser?.contrasena      || apiUser?.['contraseña'] || '',
     createdAt:       apiUser?.createdAt       || '',
     totalGastos:     apiUser?.totalGastos     || 0,
     totalCategorias: apiUser?.totalCategorias || 0,
   });
 
-  // ── Restaurar sesión al recargar la página ────────────────────────────────
+  // Restaurar sesion al recargar
   useEffect(() => {
-  try {
-    const token = localStorage.getItem(TOKEN_KEY);
-    const userData = localStorage.getItem(USER_KEY);
-
-    if (token && userData) {
-      const parsedUser = JSON.parse(userData);
-
-      setUser(parsedUser);
-      setIsAuthenticated(true);
+    try {
+      const token    = localStorage.getItem(TOKEN_KEY);
+      const userData = localStorage.getItem(USER_KEY);
+      if (token && userData) {
+        setUser(JSON.parse(userData));
+        setIsAuthenticated(true);
+      }
+    } catch {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+    } finally {
+      setLoading(false);
     }
-  } catch (error) {
-    console.error(error);
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-  } finally {
-    setLoading(false);
-  }
-}, []);
+  }, []);
 
-  // ── login(correo, contrasena) ─────────────────────────────────────────────
-  //  Endpoint: POST /login
-  //  Body:     { correo, contrasena }
-  //  Respuesta esperada: { token, user } o { token, usuario } o { token, data }
-  //
-  //  Si tu API no devuelve un objeto user (solo devuelve el token),
-  //  el nombre se mostrará vacío en Topnav/Perfil hasta que hagas otra llamada
-  //  para obtener el perfil. Puedes añadir ese fetch aquí cuando lo necesites.
+  // ── login ──────────────────────────────────────────────
   const login = useCallback(async (correo, contrasena) => {
     try {
-      const res = await fetch(`${API_URL}/login`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ correo, contrasena }),
-      });
+      const res = await fetch(API_URL);
+      if (!res.ok) return { success: false, message: 'Error al conectar con el servidor.' };
 
-      const data = await res.json();
+      const usuarios = await res.json();
 
-      if (!res.ok) {
-        return {
-          success: false,
-          message: data.message || data.error || 'Credenciales incorrectas.',
-        };
+      // Buscar por correo y contrasena
+      // El campo del backend se llama "contraseña" con ñ
+      const encontrado = usuarios.find(u =>
+        u.correo === correo && (u.contraseña === contrasena || u.contrasena === contrasena)
+      );
+
+      if (!encontrado) {
+        return { success: false, message: 'Correo o contrasena incorrectos.' };
       }
 
-      // Tu API devuelve el usuario directamente sin token:
-      // { id, nombre, correo, contrasena }
-      // Usamos "session_{id}" como identificador hasta que implementes JWT.
-      // Cuando tu backend devuelva token, esto sigue funcionando sin cambios.
-      const token   = data.token || data.access_token || data.jwt || ('session_' + data.id);
-      const apiUser = data.user  || data.usuario      || data.data || data;
-
-      if (!apiUser.id && !data.id) {
-        return { success: false, message: 'Credenciales incorrectas.' };
-      }
-
-      saveSession(token, normalizeUser(apiUser, { correo }));
+      const token = 'session_' + encontrado.id + '_' + Date.now();
+      saveSession(token, normalizeUser(encontrado));
       return { success: true };
 
-    } catch (err) {
-      console.error('[AuthContext] login error:', err);
+    } catch {
       return { success: false, message: 'No se pudo conectar con el servidor.' };
     }
   }, []);
 
-  // ── register(formData) ────────────────────────────────────────────────────
-  //  Endpoint: POST /register
-  //  Body mínimo que espera tu API: { nombre, correo, contrasena }
-  //  Se envían también los campos extra de Registro.jsx — el backend
-  //  los ignorará hasta que los implementes en tu API.
+  // ── register ───────────────────────────────────────────
   const register = useCallback(async (formData) => {
     try {
       const payload = {
-        nombre:     formData.nombres    || formData.nombre || '',  // Registro.jsx usa "nombres"
-        correo:     formData.correo,
-        contrasena: formData.contrasena,
-        // Campos extra — el backend los ignora si no los procesa:
-        tipoDoc:    formData.tipoDoc    || '',
-        documento:  formData.documento  || '',
-        edad:       formData.edad       || null,
-        genero:     formData.genero     || '',
-        telefono:   formData.telefono   || '',
-        ocupacion:  formData.ocupacion  || '',
+        nombres:       formData.nombres    || '',
+        correo:        formData.correo,
+        // ✅ "contraseña" con ñ — nombre exacto del campo en Usuario.java
+        contraseña:    formData.contrasena,
+        tipoDocumento: formData.tipoDoc    || '',
+        documento:     formData.documento  || '',
+        edad:          parseInt(formData.edad, 10) || 0,
+        genero:        formData.genero     || '',
+        telefono:      formData.telefono   || '',
+        ocupacion:     formData.ocupacion  || '',
       };
 
-      const res = await fetch(`${API_URL}/register`, {
+      const res = await fetch(API_URL, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        return {
-          success: false,
-          message: data.message || data.error || 'Error al crear la cuenta.',
-        };
+        return { success: false, message: data.message || data.error || `Error ${res.status}` };
       }
 
-      // Si la API devuelve token al registrarse → sesión automática
-      const token   = data.token || data.access_token || data.jwt;
-      const apiUser = data.user  || data.usuario      || data.data || {};
-
-      if (token) {
-        saveSession(token, normalizeUser(apiUser, payload));
+      // ✅ Login automatico con el usuario recien creado
+      if (data?.id) {
+        const token = 'session_' + data.id + '_' + Date.now();
+        saveSession(token, normalizeUser(data));
       }
 
       return { success: true };
 
-    } catch (err) {
-      console.error('[AuthContext] register error:', err);
+    } catch {
       return { success: false, message: 'No se pudo conectar con el servidor.' };
     }
   }, []);
 
-  // ── logout() ──────────────────────────────────────────────────────────────
-  //  Usado en: Sidebar.jsx → handleLogout()
-  //            Topnav.jsx  → handleLogout()
+  // ── logout ─────────────────────────────────────────────
   const logout = useCallback(() => {
     clearSession();
   }, []);
 
-  // ── updateUser(newData) ───────────────────────────────────────────────────
-  //  Para Ajustes.jsx cuando implementes edición de perfil:
-  //    const { updateUser } = useAuth();
-  //    updateUser({ name: 'Nuevo nombre', telefono: '3001234567' });
+  // ── updateUser ─────────────────────────────────────────
   const updateUser = useCallback((newData) => {
     setUser(prev => {
       const updated = { ...prev, ...newData };
@@ -222,37 +146,20 @@ export function AuthProvider({ children }) {
     });
   }, []);
 
-  // ── getToken() ────────────────────────────────────────────────────────────
-  //  Para cualquier petición protegida en tus pages:
-  //    const { getToken } = useAuth();
-  //    const res = await fetch('http://localhost/loginApi/gastos', {
-  //      headers: { Authorization: `Bearer ${getToken()}` }
-  //    });
   const getToken = useCallback(() => localStorage.getItem(TOKEN_KEY), []);
 
   return (
     <AuthContext.Provider value={{
-      user,
-      isAuthenticated,
-      loading,
-      login,
-      register,
-      logout,
-      updateUser,
-      getToken,
+      user, isAuthenticated, loading,
+      login, register, logout, updateUser, getToken,
     }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
-// ── Hook de conveniencia ──────────────────────────────────────────────────────
-//  import { useAuth } from '../context/AuthContext';
-//  const { user, login, logout, getToken } = useAuth();
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth debe usarse dentro de <AuthProvider>. Revisa main.jsx.');
-  }
+  if (!context) throw new Error('useAuth debe usarse dentro de <AuthProvider>.');
   return context;
 }
